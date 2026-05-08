@@ -1,0 +1,179 @@
+# Malipopay Social (Postiz) - LOCAL DEVELOPMENT
+# Usage: docker compose -f docker-compose.local.yml up -d
+
+services:
+  postiz:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: malipopay-social-local
+    restart: unless-stopped
+    environment:
+      # NGROK_URL falls back to localhost when not set (set in .env when tunneling)
+      MAIN_URL: "${NGROK_URL:-http://localhost:5001}"
+      FRONTEND_URL: "${NGROK_URL:-http://localhost:5001}"
+      NEXT_PUBLIC_BACKEND_URL: "${NGROK_URL:-http://localhost:5001}/api"
+      JWT_SECRET: "malipopay-local-dev-secret-2026"
+      DATABASE_URL: "postgresql://malipopay-user:malipopay-pass@malipopay-postgres:5432/malipopay-social-db"
+      REDIS_URL: "redis://malipopay-redis:6379"
+      BACKEND_INTERNAL_URL: "http://localhost:3001"
+      IS_GENERAL: "true"
+      STORAGE_PROVIDER: "local"
+      UPLOAD_DIRECTORY: "/uploads"
+      NEXT_PUBLIC_UPLOAD_DIRECTORY: "/uploads"
+      NODE_ENV: "development"
+      # Temporal: backend's orchestrator client connects via env var (default would be localhost:7233)
+      TEMPORAL_ADDRESS: "temporal:7233"
+      TEMPORAL_NAMESPACE: "default"
+      # ---- Social integration credentials ----
+      # Get these from https://developers.facebook.com/apps/<your-app>/settings/basic/
+      # In the FB app, set Valid OAuth Redirect URIs to:
+      #   http://localhost:5001/integrations/social/facebook
+      #   http://localhost:5001/integrations/social/instagram
+      #   http://localhost:5001/integrations/social/instagram-standalone
+      FACEBOOK_APP_ID: "${FACEBOOK_APP_ID:-}"
+      FACEBOOK_APP_SECRET: "${FACEBOOK_APP_SECRET:-}"
+      # Optional: separate IG app for the Instagram-Login (standalone) path. Same app
+      # works for both if you've added the Instagram product. Leave blank to skip.
+      INSTAGRAM_APP_ID: "${INSTAGRAM_APP_ID:-${FACEBOOK_APP_ID:-}}"
+      INSTAGRAM_APP_SECRET: "${INSTAGRAM_APP_SECRET:-${FACEBOOK_APP_SECRET:-}}"
+      # ---- Google OAuth (used for Sign-in with Google + YouTube + GMB) ----
+      # Get these from https://console.cloud.google.com/apis/credentials
+      # Authorized redirect URIs to register on the Google client:
+      #   http://localhost:5001/auth/activate                     (Sign in with Google)
+      #   http://localhost:5001/integrations/social/youtube       (YouTube channel connect)
+      #   http://localhost:5001/integrations/social/gmb           (Google Business Profile, optional)
+      YOUTUBE_CLIENT_ID: "${YOUTUBE_CLIENT_ID:-}"
+      YOUTUBE_CLIENT_SECRET: "${YOUTUBE_CLIENT_SECRET:-}"
+      # Optional: separate GMB credentials. Defaults to YOUTUBE_* if blank.
+      GOOGLE_GMB_CLIENT_ID: "${GOOGLE_GMB_CLIENT_ID:-${YOUTUBE_CLIENT_ID:-}}"
+      GOOGLE_GMB_CLIENT_SECRET: "${GOOGLE_GMB_CLIENT_SECRET:-${YOUTUBE_CLIENT_SECRET:-}}"
+    volumes:
+      # NOTE: source is NOT bind-mounted because Dockerfile.dev does a full
+      # `pnpm install` + `pnpm run build` + PM2 start. Bind-mounting `.:/app`
+      # would shadow the built /app/.next, /app/apps/backend/dist, etc., and
+      # the frontend would crashloop with "Could not find a production build".
+      # If you want true hot-reload, switch to a dev-mode CMD (`next dev`)
+      # and reintroduce the bind mount + named volume for node_modules.
+      - postiz-uploads-local:/uploads
+    ports:
+      - "5001:5000"                     # frontend (host 5001 -> container 5000) - 5000 collides with macOS AirPlay
+      - "3001:3000"                     # backend API (host 3001 -> container 3000)
+    networks:
+      - malipopay-social-net
+      - temporal-network                  # join Temporal's network so backend can reach temporal:7233
+    depends_on:
+      malipopay-postgres:
+        condition: service_healthy
+      malipopay-redis:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+
+  malipopay-postgres:
+    image: postgres:17-alpine
+    container_name: malipopay-social-db-local
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: malipopay-pass
+      POSTGRES_USER: malipopay-user
+      POSTGRES_DB: malipopay-social-db
+    ports:
+      - "5433:5432"                     # expose DB for local tools (TablePlus, DBeaver) - 5432 free locally, using 5433 to avoid future conflict
+    volumes:
+      - postgres-local:/var/lib/postgresql/data
+    networks:
+      - malipopay-social-net
+    healthcheck:
+      test: pg_isready -U malipopay-user -d malipopay-social-db
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  malipopay-redis:
+    image: redis:7.2
+    container_name: malipopay-social-redis-local
+    restart: unless-stopped
+    ports:
+      - "6380:6379"                     # expose Redis for local debugging - 6379 collides with local redis-server
+    volumes:
+      - redis-local:/data
+    networks:
+      - malipopay-social-net
+    healthcheck:
+      test: redis-cli ping
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # ---- Temporal stack (workflow engine the postiz backend depends on) ----
+  # Modeled on docker-compose.dev.yaml. Without these the backend crashes with
+  # `ECONNREFUSED ::1:7233` and /api/* returns 502.
+  temporal-elasticsearch:
+    image: elasticsearch:7.17.27
+    container_name: malipopay-social-temporal-es-local
+    restart: unless-stopped
+    environment:
+      - cluster.routing.allocation.disk.threshold_enabled=true
+      - cluster.routing.allocation.disk.watermark.low=512mb
+      - cluster.routing.allocation.disk.watermark.high=256mb
+      - cluster.routing.allocation.disk.watermark.flood_stage=128mb
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms256m -Xmx256m
+      - xpack.security.enabled=false
+    networks:
+      - temporal-network
+    expose:
+      - 9200
+    volumes:
+      - temporal-elasticsearch-local:/usr/share/elasticsearch/data
+
+  temporal-postgresql:
+    image: postgres:16
+    container_name: malipopay-social-temporal-db-local
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: temporal
+      POSTGRES_USER: temporal
+    networks:
+      - temporal-network
+    expose:
+      - 5432
+    volumes:
+      - temporal-postgresql-local:/var/lib/postgresql/data
+
+  temporal:
+    image: temporalio/auto-setup:1.28.1
+    container_name: malipopay-social-temporal-local
+    restart: unless-stopped
+    depends_on:
+      - temporal-postgresql
+      - temporal-elasticsearch
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=temporal
+      - POSTGRES_PWD=temporal
+      - POSTGRES_SEEDS=temporal-postgresql
+      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development-sql.yaml
+      - ENABLE_ES=true
+      - ES_SEEDS=temporal-elasticsearch
+      - ES_VERSION=v7
+      - TEMPORAL_NAMESPACE=default
+    ports:
+      - "7234:7233"                       # expose Temporal gRPC for local debugging (host 7234 -> container 7233)
+    volumes:
+      - ./dynamicconfig:/etc/temporal/config/dynamicconfig
+    networks:
+      - temporal-network
+
+volumes:
+  postgres-local:
+  redis-local:
+  postiz-uploads-local:
+  temporal-elasticsearch-local:
+  temporal-postgresql-local:
+
+networks:
+  malipopay-social-net:
+  temporal-network:
