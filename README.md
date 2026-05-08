@@ -1,3 +1,9 @@
+<h1 align="center">Malipopay Social</h1>
+
+<p align="center">
+  Malipopay Social is the Malipopay fork of <a href="https://postiz.com/" target="_blank">Postiz</a>, rebranded and tuned for the Malipopay social media workflow. Upstream credit: <a href="https://github.com/gitroomhq/postiz-app">gitroomhq/postiz-app</a>.
+</p>
+
 <p align="center">
   <a href="https://postiz.com/" target="_blank">
   <picture>
