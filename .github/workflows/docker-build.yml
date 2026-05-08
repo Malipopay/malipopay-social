@@ -24,6 +24,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
+          file: Dockerfile.dev
           push: true
           tags: |
             lockwoodtech/malipopay-social:latest
