@@ -25,15 +25,13 @@ export class LinkedinProvider extends SocialAbstract implements SocialProvider {
   oneTimeToken = true;
 
   isBetweenSteps = false;
-  scopes = [
-    'openid',
-    'profile',
-    'w_member_social',
-    'r_basicprofile',
-    'rw_organization_admin',
-    'w_organization_social',
-    'r_organization_social',
-  ];
+  // Trimmed to scopes granted by the self-serve products "Sign In with
+  // LinkedIn using OpenID Connect" + "Share on LinkedIn". The upstream list
+  // also requested r_basicprofile + the three organization scopes, which
+  // require Community Management API approval; requesting them before the
+  // app is approved makes LinkedIn reject the authorization URL outright.
+  // Restore the org scopes here once CMA access is granted (LinkedIn Pages).
+  scopes = ['openid', 'profile', 'w_member_social'];
   override maxConcurrentJob = 2; // LinkedIn has professional posting limits
   refreshWait = true;
   editor = 'normal' as const;
@@ -83,14 +81,6 @@ export class LinkedinProvider extends SocialAbstract implements SocialProvider {
       })
     ).json();
 
-    const { vanityName } = await (
-      await fetch('https://api.linkedin.com/v2/me', {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      })
-    ).json();
-
     const {
       name,
       sub: id,
@@ -103,6 +93,8 @@ export class LinkedinProvider extends SocialAbstract implements SocialProvider {
       })
     ).json();
 
+    // /v2/me (vanityName) requires r_basicprofile, which is only granted with
+    // Community Management API approval. Fall back to the OpenID name.
     return {
       id,
       accessToken,
@@ -110,7 +102,7 @@ export class LinkedinProvider extends SocialAbstract implements SocialProvider {
       expiresIn: expires_in,
       name,
       picture: picture || '',
-      username: vanityName,
+      username: name || id,
     };
   }
 
@@ -175,14 +167,8 @@ export class LinkedinProvider extends SocialAbstract implements SocialProvider {
       })
     ).json();
 
-    const { vanityName } = await (
-      await fetch('https://api.linkedin.com/v2/me', {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      })
-    ).json();
-
+    // /v2/me (vanityName) requires r_basicprofile (Community Management API
+    // approval). Use the OpenID name as the username until CMA is granted.
     return {
       id,
       accessToken,
@@ -190,7 +176,7 @@ export class LinkedinProvider extends SocialAbstract implements SocialProvider {
       expiresIn,
       name,
       picture,
-      username: vanityName,
+      username: name || id,
     };
   }
 
