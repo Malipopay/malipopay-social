@@ -25,4 +25,7 @@ COPY var/docker/nginx.conf /etc/nginx/nginx.conf
 RUN pnpm install
 RUN NODE_OPTIONS="--max-old-space-size=4096" pnpm run build
 
-CMD ["sh", "-c", "nginx && pnpm run pm2"]
+# wait-for-temporal gates PM2 so the orchestrator never builds its Temporal
+# workers before Temporal can serve. See the file for why this cannot be
+# left to docker-compose depends_on.
+CMD ["sh", "-c", "nginx && node var/docker/wait-for-temporal.js && pnpm run pm2"]
