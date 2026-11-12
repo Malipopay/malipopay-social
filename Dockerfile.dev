@@ -22,7 +22,12 @@ WORKDIR /app
 COPY . /app
 COPY var/docker/nginx.conf /etc/nginx/nginx.conf
 
-RUN pnpm install
+# --frozen-lockfile pins the build to the committed pnpm-lock.yaml.
+# Without it every image build re-resolved dependencies, so the same commit
+# produced different trees on different days: the 2026-11-12 build failed with
+# "Can't resolve '@vercel/turbopack-next/internal/font/google/font'" on code
+# that had built cleanly ten days earlier. Deploys must be reproducible.
+RUN pnpm install --frozen-lockfile
 RUN NODE_OPTIONS="--max-old-space-size=4096" pnpm run build
 
 # wait-for-temporal gates PM2 so the orchestrator never builds its Temporal
